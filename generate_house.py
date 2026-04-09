@@ -20,14 +20,14 @@ def create_wall(model, storey, body_context, x, y, length, angle, height=3.0, th
 
     Parameters
     ----------
-    model         : ifcopenshell.file  – the IFC model
-    storey        : IfcBuildingStorey  – spatial container for the wall
+    model         : ifcopenshell.file  - the IFC model
+    storey        : IfcBuildingStorey  - spatial container for the wall
     body_context  : IfcGeometricRepresentationSubContext
-    x, y          : float – origin of the wall in plan (metres)
-    length        : float – wall length along its local X axis (metres)
-    angle         : float – rotation around the global Z axis (radians)
-    height        : float – wall height (metres)
-    thickness     : float – wall thickness (metres)
+    x, y          : float - origin of the wall in plan (metres)
+    length        : float - wall length along its local X axis (metres)
+    angle         : float - rotation around the global Z axis (radians)
+    height        : float - wall height (metres)
+    thickness     : float - wall thickness (metres)
     """
     # Create the IfcWall entity
     wall = ifcopenshell.api.run("root.create_entity", model, ifc_class="IfcWall")
@@ -69,12 +69,12 @@ def create_slab(model, storey, body_context, width, depth, thickness=0.2):
 
     Parameters
     ----------
-    model         : ifcopenshell.file  – the IFC model
-    storey        : IfcBuildingStorey  – spatial container for the slab
+    model         : ifcopenshell.file  - the IFC model
+    storey        : IfcBuildingStorey  - spatial container for the slab
     body_context  : IfcGeometricRepresentationSubContext
-    width         : float – slab dimension along X (metres)
-    depth         : float – slab dimension along Y (metres)
-    thickness     : float – slab extrusion depth (metres)
+    width         : float - slab dimension along X (metres)
+    depth         : float - slab dimension along Y (metres)
+    thickness     : float - slab extrusion depth (metres)
     """
     # Create the IfcSlab entity
     slab = ifcopenshell.api.run("root.create_entity", model, ifc_class="IfcSlab")
@@ -98,6 +98,73 @@ def create_slab(model, storey, body_context, width, depth, thickness=0.2):
     ifcopenshell.api.run("spatial.assign_container", model, relating_structure=storey, products=[slab])
 
     return slab
+
+
+def create_roof(model, storey, body_context, width, depth, wall_height, ridge_height=2.0):
+    """Create a gable IfcRoof as an extruded triangular solid (SweptSolid).
+
+    Parameters
+    ----------
+    model         : ifcopenshell.file
+    storey        : IfcBuildingStorey
+    body_context  : IfcGeometricRepresentationSubContext
+    width         : float - house width along X (metres)
+    depth         : float - house depth along Y (metres)
+    wall_height   : float - elevation at which the roof base sits (metres)
+    ridge_height  : float - height of the ridge above wall tops (metres)
+    """
+    # Create the IfcRoof entity
+    roof = ifcopenshell.api.run("root.create_entity", model, ifc_class="IfcRoof")
+
+    # Create triangular profile using 2D points (for profile plane)
+    # Triangle: base at Y=0 from X=0 to X=width, apex at (width/2, ridge_height)
+    points_2d = [
+        model.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0)),
+        model.create_entity("IfcCartesianPoint", Coordinates=(float(width), 0.0)),
+        model.create_entity("IfcCartesianPoint", Coordinates=(float(width / 2), float(ridge_height))),
+        model.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0)),  # Close the loop
+    ]
+    
+    # Create polyline and profile
+    polyline = model.create_entity("IfcPolyline", Points=points_2d)
+    profile = model.create_entity("IfcArbitraryClosedProfileDef", 
+                                   ProfileType="AREA", 
+                                   ProfileName=None, 
+                                   OuterCurve=polyline)
+
+    # Position: place profile in XY plane, extrude along Z (depth direction)
+    origin = model.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0, 0.0))
+    axis_z = model.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0))
+    axis_x = model.create_entity("IfcDirection", DirectionRatios=(1.0, 0.0, 0.0))
+    placement = model.create_entity("IfcAxis2Placement3D", Location=origin, Axis=axis_z, RefDirection=axis_x)
+
+    # Extrude along Y axis for depth
+    extrude_direction = model.create_entity("IfcDirection", DirectionRatios=(0.0, 1.0, 0.0))
+    extruded_solid = model.create_entity("IfcExtrudedAreaSolid",
+                                          SweptArea=profile,
+                                          Position=placement,
+                                          ExtrudedDirection=extrude_direction,
+                                          Depth=float(depth))
+
+    # Create representation
+    representation = model.create_entity("IfcShapeRepresentation",
+                                          ContextOfItems=body_context,
+                                          RepresentationIdentifier="Body",
+                                          RepresentationType="SweptSolid",
+                                          Items=[extruded_solid])
+
+    # Assign representation
+    ifcopenshell.api.run("geometry.assign_representation", model, product=roof, representation=representation)
+
+    # Position roof at the top of walls
+    matrix = np.eye(4)
+    matrix[2][3] = float(wall_height)
+    ifcopenshell.api.run("geometry.edit_object_placement", model, product=roof, matrix=matrix)
+
+    # Assign to storey
+    ifcopenshell.api.run("spatial.assign_container", model, relating_structure=storey, products=[roof])
+
+    return roof
 
 
 def main():
